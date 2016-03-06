@@ -353,11 +353,11 @@ def session_current(request, accountId, interval=1440):
     if not accountId or len(accountId) == 0:
         return JSONResponse('No input parameter account_id.', status=400)
 
-    sql = 'select type, last(value) from vpn_stat where '
+    sql = 'select type, last(value) as value from vpn_stat where '
     sql += ' time > now() - 10m'
     sql += ' and vm_type = \'vpn\''
     sql += ' and (type = \'in_bytes\' or type = \'out_bytes\' or type = \'in_packets\' or type = \'out_packets\' or type = \'in_addtime\')'
-    sql += ' group by host,account_id,group_name,user_name;'
+    sql += ' group by type, host,account_id,group_name,user_name;'
     # print sql
     statsData = query.queryInfluxdb(accountId, sql, 'database_raw')
     # print statsData
