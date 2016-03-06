@@ -1,0 +1,7 @@
+[InfluxDB]
+server_ip = 10.74.113.100
+server_port = 8086
+database = dms_metrics_five_min
+username = admin
+password = admin
+not_found = not_found

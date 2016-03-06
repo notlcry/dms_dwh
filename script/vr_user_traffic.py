@@ -32,67 +32,86 @@ def convertTime(endDt):
 
     return (date_key, time_key,)
 
-def normalizeData(statsData, endDt):
+def normalizeData(data, endDt):
+    global notFound
     stats = []
     keyMapping = {}
     if statsData.raw and statsData.raw['series']:
         for item in statsData.raw['series']:
             statsColumn = item['columns']
             timeIndex = statsColumn.index('time')
-            maxIndex = statsColumn.index('maxvalue')
-            avgIndex = statsColumn.index('avgvalue')
-            minIndex = statsColumn.index('minvalue')
+            valueIndex = statsColumn.index('value')
+            hostname = item['tags']['host']
+            if hostname == notFound :
+                continue
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
             groupname = item['tags']['group_name']
             if groupname == notFound :
                 continue
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
+            username = item['tags']['user_name']
+            if username == notFound :
+                continue
+            typeinstance = item['tags']['type']
+            if typeinstance == notFound :
                 continue
 
             entry = item['values'][0]
-            maxvalue = entry[maxIndex]
-            avgvalue = entry[avgIndex]
-            minvalue = entry[minIndex]
-            key = accountid + groupname + instancename
+            value = entry[valueIndex]
+            key = hostname + accountid + groupname + username
             keyData = keyMapping.get(key, None)
             if keyData == None:
                 inputData = {}
-                inputData['instancename'] = instancename
-                inputData['groupname'] = groupname
+                inputData['hostname'] = hostname
                 inputData['accountid'] = accountid
-                inputData['maxdisk'] = maxvalue
-                inputData['avgdisk'] = avgvalue
-                inputData['mindisk'] = minvalue
+                inputData['groupname'] = groupname
+                inputData['username'] = username
+                if typeinstance == 'dl_src_n_bytes':
+                    inputData['rxbytes'] = value
+                elif typeinstance == 'mod_dl_dst_n_bytes':
+                    inputData['txbytes'] = value
+                elif typeinstance == 'dl_src_n_packets':
+                    inputData['rxpkts'] = value
+                else:
+                    inputData['txpkts'] = value
                 keyMapping.update({key : inputData})
             else:
                 inputData = keyData
-                inputData['maxdisk'] = maxvalue
-                inputData['avgdisk'] = avgvalue
-                inputData['mindisk'] = minvalue
+                if typeinstance == 'dl_src_n_bytes':
+                    inputData['rxbytes'] = value
+                elif typeinstance == 'mod_dl_dst_n_bytes':
+                    inputData['txbytes'] = value
+                elif typeinstance == 'dl_src_n_packets':
+                    inputData['rxpkts'] = value
+                else:
+                    inputData['txpkts'] = value
 
     for (k, v) in keyMapping.items():
         newTime = convertTime(endDt)
-        maxdisk = v.get('maxdisk', None)
-        if maxdisk is None:
-            maxdisk = 0
-        avgdisk = v.get('avgdisk', None)
-        if avgdisk is None:
-            avgdisk = 0
-        mindisk = v.get('mindisk', None)
-        if mindisk is None:
-            mindisk = 0
+        rxbytes = v.get('rxbytes', None)
+        if rxbytes is None:
+            rxbytes = 0
+        rxpkts = v.get('rxpkts', None)
+        if rxpkts is None:
+            rxpkts = 0
+        txbytes = v.get('txbytes', None)
+        if txbytes is None:
+            txbytes = 0
+        txpkts = v.get('txpkts', None)
+        if txpkts is None:
+            txpkts = 0
         res = {
-                'instancename': v['instancename'],
-                'groupname': v['groupname'],
+                'hostname': v['hostname'],
                 'accountid': v['accountid'],
+                'groupname': v['groupname'],
+                'username': v['username'],
                 'datekey' : newTime[0],
                 'timekey' : newTime[1],
-                'maxdisk': maxdisk,
-                'avgdisk': avgdisk,
-                'mindisk': mindisk
+                'rxbytes': rxbytes,
+                'rxpkts': rxpkts,
+                'txbytes': txbytes,
+                'txpkts': txpkts
             }
         stats.append(res)
 
@@ -114,32 +133,33 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 15 + 15 
+    discard = dt.minute % 5 
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=15)
+    beginDelta = timedelta(minutes=5)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select max(value) as maxvalue, mean(value) as avgvalue, min(value) as minvalue from vpc_disk_util_stat where '
+    sql = 'select sum(value) as value from vrouter_traffic_stat where '
     sql += ' time > ' + beginTS + ' and time <= ' + endTS
-    sql += ' group by account_id,group_name,instance_name;'
-    
+    sql += ' and (type = \'dl_src_n_bytes\' or type = \'mod_dl_dst_n_bytes\' or type = \'dl_src_n_packets\' or type = \'mod_dl_dst_n_packets\')'
+    sql += ' and user_or_group = \'user\''
+    sql += ' group by type,host,account_id,group_name,user_name;'
     # print sql
     statsData = queryInfluxdb(sql)
-    # print statsData.raw
 
     if statsData  == None:
         sys.exit(1)
-
-    vpcStats = normalizeData(statsData, endDt)
-    if len(vpcStats) > 0 :
-        print json.dumps({'result' : vpcStats})
+    
+    # print statsData.raw
+    stats = normalizeData(statsData, endDt)
+    if len(stats) > 0 :
+      print json.dumps({'result' : stats})
     else :
-        sys.exit(1)
+      sys.exit(1)
 except Exception, e:
     print str(e)
     sys.exit(1)

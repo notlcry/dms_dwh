@@ -23,12 +23,8 @@ def queryInfluxdb (sql):
     except:
         return None
 
-def convertTime(utcTime):
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('Asia/Shanghai')
-    utcZone = datetime.strptime(utcTime,'%Y-%m-%dT%H:%M:%SZ');
-    utcZone = utcZone.replace(tzinfo=from_zone)
-    dt = utcZone.astimezone(to_zone)
+def convertTime(endDt):
+    dt = endDt
     date_key = str(dt.year) + ('0' if dt.month < 10 else '') + str(dt.month) + ('0' if dt.day < 10 else '') + str(dt.day)
     date_key = int(date_key)
     time_key = ('0' if dt.hour < 10 else '') + str(dt.hour) + ('0' if dt.minute < 10 else '') + str(dt.minute) + ('0' if dt.second < 10 else '') + str(dt.second)
@@ -36,23 +32,17 @@ def convertTime(utcTime):
 
     return (date_key, time_key,)
 
-def normalizeData(data):
+def normalizeData(data, endDt):
     global notFound
     stats = []
-    nameMapping = {'dl_src_n_bytes': 'rxbytes', 'mod_dl_dst_n_bytes': 'txbytes',
-                    'dl_src_n_packets': 'rxpkts', 'mod_dl_dst_n_packets': 'txpkts'}
     keyMapping = {}
-    if data.raw and data.raw['series']:
-        for item in data.raw['series']:
+    if statsData.raw and statsData.raw['series']:
+        for item in statsData.raw['series']:
             statsColumn = item['columns']
-            valueIndex = statsColumn.index('value')
             timeIndex = statsColumn.index('time')
-            typeIndex = statsColumn.index('type')
+            valueIndex = statsColumn.index('value')
             hostname = item['tags']['host']
             if hostname == notFound :
-                continue
-            username = item['tags']['user_name']
-            if username == notFound :
                 continue
             accountid = item['tags']['account_id']
             if accountid == notFound :
@@ -60,30 +50,41 @@ def normalizeData(data):
             groupname = item['tags']['group_name']
             if groupname == notFound :
                 continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                typeVal = entry[typeIndex]
-                key = hostname + accountid + groupname + username + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['hostname'] = hostname
-                    inputData['accountid'] = accountid
-                    inputData['groupname'] = groupname
-                    inputData['username'] = username
-                    inputData[nameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
+            typeinstance = item['tags']['type']
+            if typeinstance == notFound :
+                continue
+
+            entry = item['values'][0]
+            value = entry[valueIndex]
+            key = hostname + accountid + groupname
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['hostname'] = hostname
+                inputData['accountid'] = accountid
+                inputData['groupname'] = groupname
+                if typeinstance == 'dl_src_n_bytes':
+                    inputData['rxbytes'] = value
+                elif typeinstance == 'mod_dl_dst_n_bytes':
+                    inputData['txbytes'] = value
+                elif typeinstance == 'dl_src_n_packets':
+                    inputData['rxpkts'] = value
                 else:
-                    inputData = keyData
-                    inputData[nameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
+                    inputData['txpkts'] = value
+                keyMapping.update({key : inputData})
+            else:
+                inputData = keyData
+                if typeinstance == 'dl_src_n_bytes':
+                    inputData['rxbytes'] = value
+                elif typeinstance == 'mod_dl_dst_n_bytes':
+                    inputData['txbytes'] = value
+                elif typeinstance == 'dl_src_n_packets':
+                    inputData['rxpkts'] = value
+                else:
+                    inputData['txpkts'] = value
 
     for (k, v) in keyMapping.items():
-        newTime = convertTime(v['time'])
+        newTime = convertTime(endDt)
         rxbytes = v.get('rxbytes', None)
         if rxbytes is None:
             rxbytes = 0
@@ -100,7 +101,6 @@ def normalizeData(data):
                 'hostname': v['hostname'],
                 'accountid': v['accountid'],
                 'groupname': v['groupname'],
-                'username': v['username'],
                 'datekey' : newTime[0],
                 'timekey' : newTime[1],
                 'rxbytes': rxbytes,
@@ -128,20 +128,21 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 30 + 30 
+    discard = dt.minute % 5
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=30)
+    beginDelta = timedelta(minutes=5)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select type, value from vrouter_traffic_stat_sum where '
+    sql = 'select sum(value) as value from vrouter_traffic_stat where '
     sql += ' time > ' + beginTS + ' and time <= ' + endTS
     sql += ' and (type = \'dl_src_n_bytes\' or type = \'mod_dl_dst_n_bytes\' or type = \'dl_src_n_packets\' or type = \'mod_dl_dst_n_packets\')'
-    sql += ' group by host,account_id,group_name,user_name;'
+    sql += ' and user_or_group = \'group\''
+    sql += ' group by type,host,account_id,group_name;'
     # print sql
     statsData = queryInfluxdb(sql)
 
@@ -149,7 +150,7 @@ try:
         sys.exit(1)
     
     # print statsData.raw
-    stats = normalizeData(statsData)
+    stats = normalizeData(statsData, endDt)
     if len(stats) > 0 :
       print json.dumps({'result' : stats})
     else :

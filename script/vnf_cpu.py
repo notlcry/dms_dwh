@@ -45,54 +45,49 @@ def normalizeData(statsData, endDt):
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
-            groupname = item['tags']['group_name']
-            if groupname == notFound :
-                continue
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
+            hostname = item['tags']['host']
+            if hostname == notFound :
                 continue
 
             entry = item['values'][0]
             maxvalue = entry[maxIndex]
             avgvalue = entry[avgIndex]
             minvalue = entry[minIndex]
-            key = accountid + groupname + instancename
+            key = accountid + hostname
             keyData = keyMapping.get(key, None)
             if keyData == None:
                 inputData = {}
-                inputData['instancename'] = instancename
-                inputData['groupname'] = groupname
+                inputData['hostname'] = hostname
                 inputData['accountid'] = accountid
-                inputData['maxdisk'] = maxvalue
-                inputData['avgdisk'] = avgvalue
-                inputData['mindisk'] = minvalue
+                inputData['maxcpu'] = maxvalue
+                inputData['avgcpu'] = avgvalue
+                inputData['mincpu'] = minvalue
                 keyMapping.update({key : inputData})
             else:
                 inputData = keyData
-                inputData['maxdisk'] = maxvalue
-                inputData['avgdisk'] = avgvalue
-                inputData['mindisk'] = minvalue
+                inputData['maxcpu'] = maxvalue
+                inputData['avgcpu'] = avgvalue
+                inputData['mincpu'] = minvalue
 
     for (k, v) in keyMapping.items():
         newTime = convertTime(endDt)
-        maxdisk = v.get('maxdisk', None)
-        if maxdisk is None:
-            maxdisk = 0
-        avgdisk = v.get('avgdisk', None)
-        if avgdisk is None:
-            avgdisk = 0
-        mindisk = v.get('mindisk', None)
-        if mindisk is None:
-            mindisk = 0
+        maxcpu = v.get('maxcpu', None)
+        if maxcpu is None:
+            maxcpu = 0
+        avgcpu = v.get('avgcpu', None)
+        if avgcpu is None:
+            avgcpu = 0
+        mincpu = v.get('mincpu', None)
+        if mincpu is None:
+            mincpu = 0
         res = {
-                'instancename': v['instancename'],
-                'groupname': v['groupname'],
+                'hostname': v['hostname'],
                 'accountid': v['accountid'],
                 'datekey' : newTime[0],
                 'timekey' : newTime[1],
-                'maxdisk': maxdisk,
-                'avgdisk': avgdisk,
-                'mindisk': mindisk
+                'maxcpu': maxcpu,
+                'avgcpu': avgcpu,
+                'mincpu': mincpu
             }
         stats.append(res)
 
@@ -114,19 +109,19 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 15 + 15 
+    discard = dt.minute % 5 
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=15)
+    beginDelta = timedelta(minutes=5)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select max(value) as maxvalue, mean(value) as avgvalue, min(value) as minvalue from vpc_disk_util_stat where '
+    sql = 'select max(value) as maxvalue, mean(value) as avgvalue, min(value) as minvalue from cpu_stat where '
     sql += ' time > ' + beginTS + ' and time <= ' + endTS
-    sql += ' group by account_id,group_name,instance_name;'
+    sql += ' group by account_id,host;'
     
     # print sql
     statsData = queryInfluxdb(sql)
@@ -135,9 +130,9 @@ try:
     if statsData  == None:
         sys.exit(1)
 
-    vpcStats = normalizeData(statsData, endDt)
-    if len(vpcStats) > 0 :
-        print json.dumps({'result' : vpcStats})
+    vnfStats = normalizeData(statsData, endDt)
+    if len(vnfStats) > 0 :
+        print json.dumps({'result' : vnfStats})
     else :
         sys.exit(1)
 except Exception, e:

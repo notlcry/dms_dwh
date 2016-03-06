@@ -22,12 +22,8 @@ def queryInfluxdb (sql):
     except:
         return None
 
-def convertTime(utcTime):
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('Asia/Shanghai')
-    utcZone = datetime.strptime(utcTime,'%Y-%m-%dT%H:%M:%SZ');
-    utcZone = utcZone.replace(tzinfo=from_zone)
-    dt = utcZone.astimezone(to_zone)
+def convertTime(endDt):
+    dt = endDt
     date_key = str(dt.year) + ('0' if dt.month < 10 else '') + str(dt.month) + ('0' if dt.day < 10 else '') + str(dt.day)
     date_key = int(date_key)
     time_key = ('0' if dt.hour < 10 else '') + str(dt.hour) + ('0' if dt.minute < 10 else '') + str(dt.minute) + ('0' if dt.second < 10 else '') + str(dt.second)
@@ -35,83 +31,75 @@ def convertTime(utcTime):
 
     return (date_key, time_key,)
 
-def mergeData(rxData, txData):
+def mergeData(rxData, txData, endDt):
     global notFound
 
     keyMapping = {}
     if rxData.raw and rxData.raw['series']:
         for item in rxData.raw['series']:
             statsColumn = item['columns']
-            valueIndex = statsColumn.index('value')
             timeIndex = statsColumn.index('time')
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
-                continue
+            valueIndex = statsColumn.index('value')
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
             groupname = item['tags']['group_name']
             if groupname == notFound :
                 continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                key = accountid + groupname + instancename + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['instancename'] = instancename
-                    inputData['accountid'] = accountid
-                    inputData['groupname'] = groupname
-                    inputData['rxbytes'] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
-                else:
-                    inputData = keyData
-                    preVal = inputData.get('rxbytes', 0)
-                    inputData['rxbytes'] = value + preVal
-                    inputData['time'] = timeVal
+            instancename = item['tags']['instance_name']
+            if instancename == notFound :
+                continue
+
+            entry = item['values'][0]
+            value = entry[valueIndex]
+            key = accountid + groupname + instancename
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['accountid'] = accountid
+                inputData['groupname'] = groupname
+                inputData['instancename'] = instancename
+                inputData['rxbytes'] = value
+                keyMapping.update({key : inputData})
+            else:
+                inputData = keyData
+                preVal = inputData.get('rxbytes', 0)
+                inputData['rxbytes'] = value + preVal
 
     if txData.raw and txData.raw['series']:
         for item in txData.raw['series']:
             statsColumn = item['columns']
-            valueIndex = statsColumn.index('value')
             timeIndex = statsColumn.index('time')
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
-                continue
+            valueIndex = statsColumn.index('value')
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
             groupname = item['tags']['group_name']
             if groupname == notFound :
                 continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                key = accountid + groupname + instancename + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['instancename'] = instancename
-                    inputData['accountid'] = accountid
-                    inputData['groupname'] = groupname
-                    inputData['txbytes'] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
-                else:
-                    inputData = keyData
-                    preVal = inputData.get('txbytes', 0)
-                    inputData['txbytes'] = value + preVal
-                    inputData['time'] = timeVal
+            instancename = item['tags']['instance_name']
+            if instancename == notFound :
+                continue
+
+            entry = item['values'][0]
+            value = entry[valueIndex]
+            key = accountid + groupname + instancename
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['accountid'] = accountid
+                inputData['groupname'] = groupname
+                inputData['instancename'] = instancename
+                inputData['txbytes'] = value
+                keyMapping.update({key : inputData})
+            else:
+                inputData = keyData
+                preVal = inputData.get('txbytes', 0)
+                inputData['txbytes'] = value + preVal
 
     stats = []
     for (k, v) in keyMapping.items():
-        newTime = convertTime(v['time'])
+        newTime = convertTime(endDt)
         rxbytes = v.get('rxbytes', None)
         if rxbytes is None:
             rxbytes = 0
@@ -148,17 +136,17 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 30 + 30 
+    discard = dt.minute % 15 + 15
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=30)
+    beginDelta = timedelta(minutes=15)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select mac, value from vpc_network_incoming_stat_sum where '
+    sql = 'select sum(value) as value from vpc_network_incoming_stat where '
     sql += ' type = \'network.incoming.bytes\''
     sql += ' and time > ' + beginTS + ' and time <= ' + endTS
     sql += ' group by account_id,group_name,instance_name;'
@@ -169,11 +157,10 @@ try:
 
     # print rxStatsData.raw
 
-    sql = 'select mac, value from vpc_network_outcoming_stat_sum where '
+    sql = 'select sum(value) as value from vpc_network_outcoming_stat where '
     sql += ' type = \'network.outcoming.bytes\''
     sql += ' and time > ' + beginTS + ' and time <= ' + endTS
     sql += ' group by account_id,group_name,instance_name;'
-    print sql
     txStatsData = queryInfluxdb(sql)
     
     if txStatsData  == None:
@@ -181,7 +168,7 @@ try:
 
     # print txStatsData.raw
 
-    vpcStats = mergeData(rxStatsData, txStatsData)
+    vpcStats = mergeData(rxStatsData, txStatsData, endDt)
     if len(vpcStats) > 0 :
         print json.dumps({'result' : vpcStats})
     else :

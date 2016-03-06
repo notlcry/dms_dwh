@@ -22,12 +22,8 @@ def queryInfluxdb (sql):
     except:
         return None
 
-def convertTime(utcTime):
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('Asia/Shanghai')
-    utcZone = datetime.strptime(utcTime,'%Y-%m-%dT%H:%M:%SZ');
-    utcZone = utcZone.replace(tzinfo=from_zone)
-    dt = utcZone.astimezone(to_zone)
+def convertTime(endDt):
+    dt = endDt
     date_key = str(dt.year) + ('0' if dt.month < 10 else '') + str(dt.month) + ('0' if dt.day < 10 else '') + str(dt.day)
     date_key = int(date_key)
     time_key = ('0' if dt.hour < 10 else '') + str(dt.hour) + ('0' if dt.minute < 10 else '') + str(dt.minute) + ('0' if dt.second < 10 else '') + str(dt.second)
@@ -35,50 +31,55 @@ def convertTime(utcTime):
 
     return (date_key, time_key,)
 
-def normalizeData(data):
+def normalizeData(data, endDt):
     global notFound
     stats = []
-    nameMapping = {'dropped': 'dropped', 'sent_pkt': 'txpkts',
-                    'sent_bytes': 'txbytes'}
     keyMapping = {}
-    if data.raw and data.raw['series']:
-        for item in data.raw['series']:
+    if statsData.raw and statsData.raw['series']:
+        for item in statsData.raw['series']:
             statsColumn = item['columns']
-            valueIndex = statsColumn.index('value')
             timeIndex = statsColumn.index('time')
-            typeIndex = statsColumn.index('type')
-            typeInstanceIndex = statsColumn.index('type_instance')
+            valueIndex = statsColumn.index('value')
             hostname = item['tags']['host']
             if hostname == notFound :
                 continue
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                typeVal = entry[typeIndex]
-                typeInstanceVal = entry[typeInstanceIndex]
-                key = hostname + accountid + timeVal + typeInstanceVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['hostname'] = hostname
-                    inputData['accountid'] = accountid
-                    inputData['classname'] = typeInstanceVal
-                    inputData[nameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
+            typename = item['tags']['type']
+            if typename == notFound :
+                continue
+            typeinstance = item['tags']['type_instance']
+            if typeinstance == notFound :
+                continue
+
+            entry = item['values'][0]
+            value = entry[valueIndex]
+            key = hostname + accountid + typeinstance
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['hostname'] = hostname
+                inputData['accountid'] = accountid
+                inputData['classname'] = typeinstance
+                if typename == 'dropped':
+                    inputData['dropped'] = value
+                elif typename == 'sent_pkt':
+                    inputData['txpkts'] = value
                 else:
-                    inputData = keyData
-                    inputData['classname'] = typeInstanceVal
-                    inputData[nameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
+                    inputData['txbytes'] = value
+                keyMapping.update({key : inputData})
+            else:
+                inputData = keyData
+                if typename == 'dropped':
+                    inputData['dropped'] = value
+                elif typename == 'sent_pkt':
+                    inputData['txpkts'] = value
+                else:
+                    inputData['txbytes'] = value
 
     for (k, v) in keyMapping.items():
-        newTime = convertTime(v['time'])
+        newTime = convertTime(endDt)
         dropped = v.get('dropped', None)
         if dropped is None:
             dropped = 0
@@ -118,22 +119,22 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 30 + 30 
+    discard = dt.minute % 5
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=30)
+    beginDelta = timedelta(minutes=5)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select type, type_instance, value from firewall_qos_stat_sum where '
+    sql = 'select sum(value) as value from firewall_qos_stat where '
     sql += ' plugin_instance = \'policy.sh\''
     sql += ' and time > ' + beginTS + ' and time <= ' + endTS
     sql += ' and vm_type = \'firewall\''
     sql += ' and (type = \'dropped\' or type = \'sent_pkt\' or type = \'sent_bytes\')'
-    sql += ' group by host,account_id;'
+    sql += ' group by type,type_instance,host,account_id;'
     
     # print sql
     statsData = queryInfluxdb(sql)
@@ -143,7 +144,7 @@ try:
         sys.exit(1)
 
     # print statsData.raw
-    stats = normalizeData(statsData)
+    stats = normalizeData(statsData, endDt)
     if len(stats) > 0 :
         print json.dumps({'result' : stats})
     else :

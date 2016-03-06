@@ -23,12 +23,8 @@ def queryInfluxdb (sql):
     except:
         return None
 
-def convertTime(utcTime):
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('Asia/Shanghai')
-    utcZone = datetime.strptime(utcTime,'%Y-%m-%dT%H:%M:%SZ');
-    utcZone = utcZone.replace(tzinfo=from_zone)
-    dt = utcZone.astimezone(to_zone)
+def convertTime(endDt):
+    dt = endDt
     date_key = str(dt.year) + ('0' if dt.month < 10 else '') + str(dt.month) + ('0' if dt.day < 10 else '') + str(dt.day)
     date_key = int(date_key)
     time_key = ('0' if dt.hour < 10 else '') + str(dt.hour) + ('0' if dt.minute < 10 else '') + str(dt.minute) + ('0' if dt.second < 10 else '') + str(dt.second)
@@ -36,114 +32,49 @@ def convertTime(utcTime):
 
     return (date_key, time_key,)
 
-def mergeData(maxData, avgData, minData):
+def normalizeData(statsData, endDt):
     stats = []
     keyMapping = {}
-    if maxData.raw and maxData.raw['series']:
-        for item in maxData.raw['series']:
+    if statsData.raw and statsData.raw['series']:
+        for item in statsData.raw['series']:
             statsColumn = item['columns']
             timeIndex = statsColumn.index('time')
-            valueIndex = statsColumn.index('value')
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
-                continue
+            maxIndex = statsColumn.index('maxvalue')
+            avgIndex = statsColumn.index('avgvalue')
+            minIndex = statsColumn.index('minvalue')
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
             groupname = item['tags']['group_name']
             if groupname == notFound :
                 continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                key = accountid + groupname + instancename + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['instancename'] = instancename
-                    inputData['groupname'] = groupname
-                    inputData['accountid'] = accountid
-                    inputData['maxmemory'] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
-                else:
-                    inputData = keyData
-                    inputData['maxmemory'] = value
-                    inputData['time'] = timeVal
+            instancename = item['tags']['instance_name']
+            if instancename == notFound :
+                continue
 
-    if avgData.raw and avgData.raw['series']:
-        for item in avgData.raw['series']:
-            statsColumn = item['columns']
-            timeIndex = statsColumn.index('time')
-            valueIndex = statsColumn.index('value')
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
-                continue
-            accountid = item['tags']['account_id']
-            if accountid == notFound :
-                continue
-            groupname = item['tags']['group_name']
-            if groupname == notFound :
-                continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                key = accountid + groupname + instancename + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['instancename'] = instancename
-                    inputData['groupname'] = groupname
-                    inputData['accountid'] = accountid
-                    inputData['avgmemory'] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
-                else:
-                    inputData = keyData
-                    inputData['avgmemory'] = value
-                    inputData['time'] = timeVal
-
-    if minData.raw and minData.raw['series']:
-        for item in minData.raw['series']:
-            statsColumn = item['columns']
-            timeIndex = statsColumn.index('time')
-            valueIndex = statsColumn.index('value')
-            instancename = item['tags']['instance_name']
-            if instancename == notFound :
-                continue
-            accountid = item['tags']['account_id']
-            if accountid == notFound :
-                continue
-            groupname = item['tags']['group_name']
-            if groupname == notFound :
-                continue
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                key = accountid + groupname + instancename + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['instancename'] = instancename
-                    inputData['groupname'] = groupname
-                    inputData['accountid'] = accountid
-                    inputData['minmemory'] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
-                else:
-                    inputData = keyData
-                    inputData['minmemory'] = value
-                    inputData['time'] = timeVal
-   
+            entry = item['values'][0]
+            maxvalue = entry[maxIndex]
+            avgvalue = entry[avgIndex]
+            minvalue = entry[minIndex]
+            key = accountid + groupname + instancename
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['instancename'] = instancename
+                inputData['groupname'] = groupname
+                inputData['accountid'] = accountid
+                inputData['maxmemory'] = maxvalue
+                inputData['avgmemory'] = avgvalue
+                inputData['minmemory'] = minvalue
+                keyMapping.update({key : inputData})
+            else:
+                inputData = keyData
+                inputData['maxmemory'] = maxvalue
+                inputData['avgmemory'] = avgvalue
+                inputData['minmemory'] = minvalue
 
     for (k, v) in keyMapping.items():
-        newTime = convertTime(v['time'])
+        newTime = convertTime(endDt)
         maxmem = v.get('maxmemory', None)
         if maxmem is None:
             maxmem = 0
@@ -183,46 +114,28 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 30 + 30 
+    discard = dt.minute % 15 + 15 
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=30)
+    beginDelta = timedelta(minutes=15)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select value from vpc_memory_util_stat_max where '
+    sql = 'select max(value) as maxvalue, mean(value) as avgvalue, min(value) as minvalue from vpc_memory_util_stat where '
     sql += ' time > ' + beginTS + ' and time <= ' + endTS
     sql += ' group by account_id,group_name,instance_name;'
     
     # print sql
-    maxStatsData = queryInfluxdb(sql)
-    # print maxStatsData.raw
+    statsData = queryInfluxdb(sql)
+    # print statsData.raw
 
-    if maxStatsData  == None:
+    if statsData  == None:
         sys.exit(1)
 
-    sql = 'select value from vpc_memory_util_stat_mean where '
-    sql += ' time > ' + beginTS + ' and time <= ' + endTS
-    sql += ' group by account_id,group_name,instance_name;'
-    # print sql
-    avgStatsData = queryInfluxdb(sql)
-    # print avgStatsData.raw
-    if avgStatsData == None:
-        sys.exit(1)
-
-    sql = 'select value from vpc_memory_util_stat_min where '
-    sql += ' time > ' + beginTS + ' and time <= ' + endTS
-    sql += ' group by account_id,group_name,instance_name;'
-    # print sql
-    minStatsData = queryInfluxdb(sql)
-    # print minStatsData.raw
-    if minStatsData == None:
-        sys.exit(1)
-
-    vpcStats = mergeData(maxStatsData, avgStatsData, minStatsData)
+    vpcStats = normalizeData(statsData, endDt)
     if len(vpcStats) > 0 :
         print json.dumps({'result' : vpcStats})
     else :

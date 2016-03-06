@@ -23,12 +23,8 @@ def queryInfluxdb (sql):
     except:
         return None
 
-def convertTime(utcTime):
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('Asia/Shanghai')
-    utcZone = datetime.strptime(utcTime,'%Y-%m-%dT%H:%M:%SZ');
-    utcZone = utcZone.replace(tzinfo=from_zone)
-    dt = utcZone.astimezone(to_zone)
+def convertTime(endDt):
+    dt = endDt
     date_key = str(dt.year) + ('0' if dt.month < 10 else '') + str(dt.month) + ('0' if dt.day < 10 else '') + str(dt.day)
     date_key = int(date_key)
     time_key = ('0' if dt.hour < 10 else '') + str(dt.hour) + ('0' if dt.minute < 10 else '') + str(dt.minute) + ('0' if dt.second < 10 else '') + str(dt.second)
@@ -36,114 +32,57 @@ def convertTime(utcTime):
 
     return (date_key, time_key,)
 
-def mergeData(maxData, avgData, minData):
+def normalizeData(statsData, endDt):
     stats = []
     keyMapping = {}
-    maxNameMapping = {'rx': 'maxrx', 'tx': 'maxtx'}
-    if maxData.raw and maxData.raw['series']:
-        for item in maxData.raw['series']:
+    if statsData.raw and statsData.raw['series']:
+        for item in statsData.raw['series']:
             statsColumn = item['columns']
             timeIndex = statsColumn.index('time')
-            typeIndex = statsColumn.index('type_instance')
-            valueIndex = statsColumn.index('value')
+            maxIndex = statsColumn.index('maxvalue')
+            avgIndex = statsColumn.index('avgvalue')
+            minIndex = statsColumn.index('minvalue')
             hostname = item['tags']['host']
             if hostname == notFound :
                 continue
             accountid = item['tags']['account_id']
             if accountid == notFound :
                 continue
-
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                typeVal = entry[typeIndex]
-                key = hostname + accountid + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['hostname'] = hostname
-                    inputData['accountid'] = accountid
-                    inputData[maxNameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
+            typeinstance = item['tags']['type_instance']
+            if typeinstance == notFound :
+                continue
+            entry = item['values'][0]
+            maxvalue = entry[maxIndex]
+            avgvalue = entry[avgIndex]
+            minvalue = entry[minIndex]
+            key = hostname + accountid
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['hostname'] = hostname
+                inputData['accountid'] = accountid
+                if typeinstance == 'rx':
+                    inputData['maxrx'] = maxvalue
+                    inputData['avgrx'] = avgvalue
+                    inputData['minrx'] = minvalue
                 else:
-                    inputData = keyData
-                    inputData[maxNameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-
-    avgNameMapping = {'rx': 'avgrx', 'tx': 'avgtx'}
-    if avgData.raw and avgData.raw['series']:
-        for item in avgData.raw['series']:
-            statsColumn = item['columns']
-            timeIndex = statsColumn.index('time')
-            typeIndex = statsColumn.index('type_instance')
-            valueIndex = statsColumn.index('value')
-            hostname = item['tags']['host']
-            if hostname == notFound :
-                continue
-            accountid = item['tags']['account_id']
-            if accountid == notFound :
-                continue
-
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                typeVal = entry[typeIndex]
-                key = hostname + accountid + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['hostname'] = hostname
-                    inputData['accountid'] = accountid
-                    inputData[avgNameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
+                    inputData['maxtx'] = maxvalue
+                    inputData['avgtx'] = avgvalue
+                    inputData['mintx'] = minvalue
+                keyMapping.update({key : inputData})
+            else:
+                inputData = keyData
+                if typeinstance == 'rx':
+                    inputData['maxrx'] = maxvalue
+                    inputData['avgrx'] = avgvalue
+                    inputData['minrx'] = minvalue
                 else:
-                    inputData = keyData
-                    inputData[avgNameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-
-    minNameMapping = {'rx': 'minrx', 'tx': 'mintx'}
-    if minData.raw and minData.raw['series']:
-        for item in minData.raw['series']:
-            statsColumn = item['columns']
-            timeIndex = statsColumn.index('time')
-            typeIndex = statsColumn.index('type_instance')
-            valueIndex = statsColumn.index('value')
-            hostname = item['tags']['host']
-            if hostname == notFound :
-                continue
-            accountid = item['tags']['account_id']
-            if accountid == notFound :
-                continue
-
-            for entry in item['values']:
-                value = entry[valueIndex]
-                if value == None:
-                    value = 0
-                timeVal = entry[timeIndex]
-                typeVal = entry[typeIndex]
-                key = hostname + accountid + timeVal
-                keyData = keyMapping.get(key, None)
-                if keyData == None:
-                    inputData = {}
-                    inputData['hostname'] = hostname
-                    inputData['accountid'] = accountid
-                    inputData[minNameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-                    keyMapping.update({key : inputData})
-                else:
-                    inputData = keyData
-                    inputData[minNameMapping[typeVal]] = value
-                    inputData['time'] = timeVal
-   
+                    inputData['maxtx'] = maxvalue
+                    inputData['avgtx'] = avgvalue
+                    inputData['mintx'] = minvalue
 
     for (k, v) in keyMapping.items():
-        newTime = convertTime(v['time'])
+        newTime = convertTime(endDt)
         maxrx = v.get('maxrx', None)
         if maxrx is None:
             maxrx = 0
@@ -206,58 +145,32 @@ try:
     notFound = config.get('InfluxDB', 'not_found')
 
     dt = datetime.now()
-    discard = dt.minute % 30 + 30 
+    discard = dt.minute % 5
     delta = timedelta(minutes=discard, seconds=dt.second, microseconds=dt.microsecond)
     endDt = dt - delta
     endTS = endDt.strftime("%s")
     endTS += 's'
-    beginDelta = timedelta(minutes=30)
+    beginDelta = timedelta(minutes=5)
     beginDt = endDt - beginDelta
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select type_instance, value from interface_rate_stat_max where '
+    sql = 'select max(value) as maxvalue, mean(value) as avgvalue, min(value) as minvalue from interface_rate_stat where '
     sql += ' plugin_instance = \'eth1\''
     sql += ' and time > ' + beginTS + ' and time <= ' + endTS
     sql += ' and vm_type = \'firewall\''
     sql += ' and type = \'if_octets\''
     sql += ' and (type_instance = \'tx\' or type_instance = \'rx\')'
-    sql += ' group by host,account_id;'
+    sql += ' group by type_instance,host,account_id;'
     
     # print sql
-    maxStatsData = queryInfluxdb(sql)
-    # print maxStatsData.raw
+    statsData = queryInfluxdb(sql)
+    # print statsData.raw
 
-    if maxStatsData  == None:
+    if statsData  == None:
         sys.exit(1)
 
-    sql = 'select type_instance, value from interface_rate_stat_mean where '
-    sql += ' plugin_instance = \'eth1\''
-    sql += ' and time > ' + beginTS + ' and time <= ' + endTS
-    sql += ' and vm_type = \'firewall\''
-    sql += ' and type = \'if_octets\''
-    sql += ' and (type_instance = \'tx\' or type_instance = \'rx\')'
-    sql += ' group by host,account_id;'
-    # print sql
-    avgStatsData = queryInfluxdb(sql)
-    # print avgStatsData.raw
-    if avgStatsData == None:
-        sys.exit(1)
-
-    sql = 'select type_instance, value from interface_rate_stat_min where '
-    sql += ' plugin_instance = \'eth1\''
-    sql += ' and time > ' + beginTS + ' and time <= ' + endTS
-    sql += ' and vm_type = \'firewall\''
-    sql += ' and type = \'if_octets\''
-    sql += ' and (type_instance = \'tx\' or type_instance = \'rx\')'
-    sql += ' group by host,account_id;'
-    # print sql
-    minStatsData = queryInfluxdb(sql)
-    # print minStatsData.raw
-    if minStatsData == None:
-        sys.exit(1)
-
-    fwStats = mergeData(maxStatsData, avgStatsData, minStatsData)
+    fwStats = normalizeData(statsData, endDt)
     if len(fwStats) > 0 :
         print json.dumps({'result' : fwStats})
     else :
