@@ -20,7 +20,7 @@ def active_user_by_group(request, accountId, interval=1440):
         return JSONResponse('No input parameter account_id.', status=400)
 
     accountIdStr = '\'' + str(accountId) + '\''
-    sql = 'select grouptable.usergroup_groupname as name, count(distinct usertable.user_id) as value from fact_vr_traffic fact_table' + '\n'
+    sql = 'select grouptable.usergroup_groupname as name, count(distinct usertable.user_id) as value from fact_vr_user_traffic fact_table' + '\n'
     sql += 'inner join dim_account acctable on (fact_table.account_key = acctable.account_key and acctable.account_id = ' + accountIdStr + ')\n'
     sql += 'inner join dim_usergroup grouptable on fact_table.usergroup_key = grouptable.usergroup_key' + '\n'
     sql += 'inner join dim_user usertable on fact_table.user_key = usertable.user_key' + '\n'

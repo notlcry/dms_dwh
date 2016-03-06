@@ -21,25 +21,66 @@ def traffic_by_account(request, accountId, interval=1440):
     accountIdStr = '\'' + str(accountId) + '\''
     intVal = int(interval)
     tableType = get_table_type(intVal)
+
+    # if tableType == '5min':
+    #     sql =  'select dt.date_value as datevalue, tt.time_value as timevalue, sum(fact_table.vr_user_traffic_tx_bytes) as tx, sum(fact_table.vr_user_traffic_rx_bytes) as rx from fact_vr_user_traffic fact_table' + '\n'
+    # else:
+    #     sql =  'select dt.date_value as datevalue, tt.hours24 as hourvalue, sum(fact_table.vr_user_traffic_tx_bytes) as tx, sum(fact_table.vr_user_traffic_rx_bytes) as rx from fact_vr_user_traffic fact_table' + '\n'
+    # sql += 'inner join dim_account acctable on (fact_table.account_key = acctable.account_key and acctable.account_id = ' + accountIdStr + ')\n'
+    # sql += 'inner join dim_date dt on fact_table.date_key = dt.date_key' + '\n'
+    # sql += 'inner join dim_time tt on fact_table.time_key = tt.time_key' + '\n'
+
+
+
+
     if tableType == '5min':
-        sql =  'select dt.date_value as datevalue, tt.time_value as timevalue, sum(fact_table.vr_traffic_tx_bytes) as tx, sum(fact_table.vr_traffic_rx_bytes) as rx from fact_vr_traffic fact_table' + '\n'
+        sql = "select traffic_acc.datevalue as datevalue, traffic_acc.timevalue as timevalue, sum(traffic_acc.tx) as tx , sum(traffic_acc.rx) as rx from("
+        sql += 'select dt.date_value as datevalue, tt.time_value as timevalue, sum(fact_table_user.vr_user_traffic_tx_bytes) as tx, sum(fact_table_user.vr_user_traffic_rx_bytes) as rx from fact_vr_user_traffic fact_table_user' + '\n'
     else:
-        sql =  'select dt.date_value as datevalue, tt.hours24 as hourvalue, sum(fact_table.vr_traffic_tx_bytes) as tx, sum(fact_table.vr_traffic_rx_bytes) as rx from fact_vr_traffic fact_table' + '\n'
-    sql += 'inner join dim_account acctable on (fact_table.account_key = acctable.account_key and acctable.account_id = ' + accountIdStr + ')\n'
-    sql += 'inner join dim_date dt on fact_table.date_key = dt.date_key' + '\n'
-    sql += 'inner join dim_time tt on fact_table.time_key = tt.time_key' + '\n'
+        sql = "select traffic_acc.datevalue as datevalue, traffic_acc.hourvalue as hourvalue, sum(traffic_acc.tx) as tx, sum(traffic_acc.rx) as rx from("
+        sql += 'select dt.date_value as datevalue, tt.hours24 as hourvalue, sum(fact_table_user.vr_user_traffic_tx_bytes) as tx, sum(fact_table_user.vr_user_traffic_rx_bytes) as rx from fact_vr_user_traffic fact_table_user' + '\n'
+    sql += 'inner join dim_account acctable on (fact_table_user.account_key = acctable.account_key and acctable.account_id = ' + accountIdStr + ')\n'
+    sql += 'inner join dim_date dt on fact_table_user.date_key = dt.date_key' + '\n'
+    sql += 'inner join dim_time tt on fact_table_user.time_key = tt.time_key' + '\n'
     beginDate = get_begin_date(intVal)
     if beginDate[0] == 0:
-        sql += 'where fact_table.date_key = ' + str(beginDate[1]) + ' and fact_table.time_key >= ' + str(beginDate[2]) + '\n'
+        sql += 'where fact_table_user.date_key = ' + str(beginDate[1]) + ' and fact_table_user.time_key >= ' + str(beginDate[2]) + '\n'
     else:
-        sql += 'where (fact_table.date_key = ' + str(beginDate[1]) + ' and fact_table.time_key >= ' + str(beginDate[2]) + ')'
-        sql += ' or (fact_table.date_key > ' + str(beginDate[1]) + ')' + '\n'
+        sql += 'where (fact_table_user.date_key = ' + str(beginDate[1]) + ' and fact_table_user.time_key >= ' + str(beginDate[2]) + ')'
+        sql += ' or (fact_table_user.date_key > ' + str(beginDate[1]) + ')' + '\n'
     if tableType == '5min':
         sql += 'group by dt.date_key,tt.time_key' + '\n'
-        sql += 'order by dt.date_key asc,tt.time_key asc'
     else:
         sql += 'group by dt.date_key,tt.hours24' + '\n'
-        sql += 'order by dt.date_key asc,tt.hours24 asc'
+
+    sql += 'UNION ALL '
+    # group
+    if tableType == '5min':
+        sql += 'select dt2.date_value as datevalue, tt2.time_value as timevalue, sum(fact_group_table.vr_group_traffic_tx_bytes) as tx, sum(fact_group_table.vr_group_traffic_rx_bytes) as rx from fact_vr_group_traffic fact_group_table' + '\n'
+    else:
+        sql += 'select dt2.date_value as datevalue, tt2.hours24 as hourvalue, sum(fact_group_table.vr_group_traffic_tx_bytes) as tx, sum(fact_group_table.vr_group_traffic_rx_bytes) as rx from fact_vr_group_traffic fact_group_table' + '\n'
+    sql += 'inner join dim_account acctable on (fact_group_table.account_key = acctable.account_key and acctable.account_id = '+ accountIdStr + ')\n'
+    sql += 'inner join dim_date dt2 on fact_group_table.date_key = dt2.date_key' + '\n'
+    sql += 'inner join dim_time tt2 on fact_group_table.time_key = tt2.time_key' + '\n'
+
+    if beginDate[0] == 0:
+        sql += 'where fact_group_table.date_key = ' + str(beginDate[1]) + ' and fact_group_table.time_key >= ' + str(beginDate[2]) + '\n'
+    else:
+        sql += 'where (fact_group_table.date_key = ' + str(beginDate[1]) + ' and fact_group_table.time_key >= ' + str(beginDate[2]) + ')'
+        sql += ' or (fact_group_table.date_key > ' + str(beginDate[1]) + ')' + '\n'
+    if tableType == '5min':
+        sql += ' group by dt2.date_key,tt2.time_key' + '\n'
+    else:
+        sql += ' group by dt2.date_key,tt2.hours24' + '\n'
+    sql += ') traffic_acc'
+
+
+    if tableType == '5min':
+        sql += ' group by traffic_acc.datevalue, traffic_acc.timevalue'
+        sql += ' order by datevalue asc, timevalue asc'
+    else:
+        sql += ' group by traffic_acc.datevalue, traffic_acc.hourvalue'
+        sql += ' order by datevalue asc,hourvalue asc'
 
     # print sql
 

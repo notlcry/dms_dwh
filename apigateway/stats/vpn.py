@@ -156,7 +156,7 @@ def agg_active_user_by_group(request, accountId, interval=1440):
     resultSet = []
     for (k, v) in keyMapping.items():
         res = [k, v['active'], v['total']]
-        resultSet += res
+        resultSet.append(res)
 
     metaData = [{
         "colIndex": 0,
