@@ -223,7 +223,7 @@ try:
     sql += ' and (type = \'dst_bytes\' or type = \'dst_packets\' or type = \'src_bytes\' or type = \'src_packets\')'
     sql += ' group by type,host,account_id,group_name,user_name;'
 
-    print sql
+    # print sql
     statsData = queryInfluxdb(sql)
     
     if statsData  == None:
