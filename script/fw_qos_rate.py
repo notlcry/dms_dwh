@@ -31,13 +31,13 @@ def convertTime(endDt):
 
     return (date_key, time_key,)
 
-def normalizeData(data, endDt):
+def normalizeData(rate_data, endDt):
     global notFound
     stats = []
 
     keyMapping = {}
-    if statsData.raw and statsData.raw['series']:
-        for item in statsData.raw['series']:
+    if rate_data.raw and rate_data.raw['series']:
+        for item in rate_data.raw['series']:
             statsColumn = item['columns']
             timeIndex = statsColumn.index('time')
             avgIndex = statsColumn.index('avg_value')
@@ -177,14 +177,14 @@ try:
     sql += ' group by type,type_instance,host,account_id;'
     
     # print sql
-    statsData = queryInfluxdb(sql)
+    data = queryInfluxdb(sql)
     
 
-    if statsData  == None:
+    if data  == None:
         sys.exit(1)
 
     # print statsData.raw
-    stats = normalizeData(statsData, endDt)
+    stats = normalizeData(rate_data, endDt)
     if len(stats) > 0 :
         print json.dumps({'result' : stats})
     else :

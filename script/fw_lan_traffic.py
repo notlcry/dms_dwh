@@ -217,13 +217,13 @@ try:
     beginTS = beginDt.strftime("%s")
     beginTS += 's'
 
-    sql = 'select mean(value) as avg_value, min(value) as min_value, max(value) as max_value from firewall_traffic_rate_stat where '
+    sql = 'select mean(value)*8 as avg_value, min(value)*8 as min_value, max(value)*8 as max_value from firewall_traffic_rate_stat where '
     sql += ' (plugin_instance=\'intergrp\' or plugin_instance=\'intragrp\')'
     sql += ' and time > ' + beginTS + ' and time <= ' + endTS
     sql += ' and (type = \'dst_bytes\' or type = \'dst_packets\' or type = \'src_bytes\' or type = \'src_packets\')'
     sql += ' group by type,host,account_id,group_name,user_name;'
 
-    # print sql
+    print sql
     statsData = queryInfluxdb(sql)
     
     if statsData  == None:

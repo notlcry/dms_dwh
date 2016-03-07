@@ -31,12 +31,13 @@ def convertTime(endDt):
 
     return (date_key, time_key,)
 
-def normalizeData(data, endDt):
+
+def normalizeData(stats_data, rate_data, endDt):
     global notFound
     stats = []
     keyMapping = {}
-    if statsData.raw and statsData.raw['series']:
-        for item in statsData.raw['series']:
+    if stats_data.raw and stats_data.raw['series']:
+        for item in stats_data.raw['series']:
             statsColumn = item['columns']
             timeIndex = statsColumn.index('time')
             valueIndex = statsColumn.index('value')
@@ -78,6 +79,55 @@ def normalizeData(data, endDt):
                 else:
                     inputData['txbytes'] = value
 
+
+    if rate_data.raw and rate_data.raw['series']:
+        for item in rate_data.raw['series']:
+            statsColumn = item['columns']
+            timeIndex = statsColumn.index('time')
+            avgIndex = statsColumn.index('avg_value')
+            minIndex = statsColumn.index('min_value')
+            maxIndex = statsColumn.index('max_value')
+
+            hostname = item['tags']['host']
+            if hostname == notFound :
+                continue
+            accountid = item['tags']['account_id']
+            if accountid == notFound :
+                continue
+            typename = item['tags']['type']
+            if typename == notFound :
+                continue
+            typeinstance = item['tags']['type_instance']
+            if typeinstance == notFound :
+                continue
+
+            entry = item['values'][0]
+            # value = entry[valueIndex]
+
+            avg_val = entry[avgIndex]
+            min_val = entry[minIndex]
+            max_val = entry[maxIndex]
+
+            key = hostname + accountid + typeinstance
+            keyData = keyMapping.get(key, None)
+            if keyData == None:
+                inputData = {}
+                inputData['hostname'] = hostname
+                inputData['accountid'] = accountid
+                inputData['classname'] = typeinstance
+                if typename == 'sent_bytes':
+                    inputData['txbps_avg'] = avg_val
+                    inputData['txbps_min'] = min_val
+                    inputData['txbps_max'] = max_val
+                keyMapping.update({key : inputData})
+
+            else:
+                inputData = keyData
+                if typename == 'sent_bytes':
+                    inputData['txbps_avg'] = avg_val
+                    inputData['txbps_min'] = min_val
+                    inputData['txbps_max'] = max_val
+
     for (k, v) in keyMapping.items():
         newTime = convertTime(endDt)
         dropped = v.get('dropped', None)
@@ -89,6 +139,19 @@ def normalizeData(data, endDt):
         txbytes = v.get('txbytes', None)
         if txbytes is None:
             txbytes = 0
+
+        txbps_avg = v.get('txbps_avg', None)
+        if txbps_avg is None:
+            txbps_avg = 0
+
+        txbps_min = v.get('txbps_min', None)
+        if txbps_min is None:
+            txbps_min = 0
+
+        txbps_max = v.get('txbps_max', None)
+        if txbps_max is None:
+            txbps_max = 0
+
         res = {
                 'hostname': v['hostname'],
                 'accountid': v['accountid'],
@@ -97,7 +160,10 @@ def normalizeData(data, endDt):
                 'timekey' : newTime[1],
                 'dropped': dropped,
                 'txpkts': txpkts,
-                'txbytes': txbytes
+                'txbytes': txbytes,
+                'txbps_avg': txbps_avg,
+                'txbps_min': txbps_min,
+                'txbps_max': txbps_max
             }
         stats.append(res)
 
@@ -138,13 +204,20 @@ try:
     
     # print sql
     statsData = queryInfluxdb(sql)
-    
 
-    if statsData  == None:
+    sql_rate = 'select mean(value)*8 as avg_value, min(value)*8 as min_value, max(value)*8 as max_value from firewall_qos_rate_stat where '
+    sql_rate += ' plugin_instance = \'policy.sh\''
+    sql_rate += ' and time > ' + beginTS + ' and time <= ' + endTS
+    sql_rate += ' and vm_type = \'firewall\''
+    sql_rate += ' and (type = \'sent_bytes\')'
+    sql_rate += ' group by type,type_instance,host,account_id;'
+
+    rateData = queryInfluxdb(sql_rate)
+    if statsData is None or rateData is None:
         sys.exit(1)
 
     # print statsData.raw
-    stats = normalizeData(statsData, endDt)
+    stats = normalizeData(statsData, rateData, endDt)
     if len(stats) > 0 :
         print json.dumps({'result' : stats})
     else :
